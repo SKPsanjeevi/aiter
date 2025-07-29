@@ -56,6 +56,7 @@ def get_cu_num():
 
 def get_device_name():
     gfx = get_gfx()
+    print("GFX : ", gfx)
 
     if gfx == "gfx942":
         cu = get_cu_num()
