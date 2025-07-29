@@ -59,6 +59,7 @@ def get_device_name():
 
     if gfx == "gfx942":
         cu = get_cu_num()
+        print("COMPUTE UNITS : ", cu)
         if cu == 304:
             return "MI300"
         elif cu == 80 or cu == 64:
