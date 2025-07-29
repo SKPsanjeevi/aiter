@@ -94,7 +94,7 @@ def get_graph_buffer_ipc_meta(_fa: int, out1: torch.Tensor, out2: list[int]) -> 
 
 
 @compile_ops("module_custom_all_reduce")
-def register_graph_buffers(_fa: int, handles: list[str], offsets: list[list[int]])-> None: ...
+def register_graph_buffers(_fa: int, handles: list[list[int]], offsets: list[list[int]])-> None: ...
 
 
 @compile_ops("module_custom_all_reduce")
