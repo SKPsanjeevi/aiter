@@ -13,6 +13,8 @@ from ..jit.core import (
 )
 from ..utility import dtypes
 from ..jit.utils.chip_info import get_cu_num
+from torch.library import Library
+aiter_lib = Library("aiter", "FRAGMENT")
 
 
 @compile_ops("module_gemm_a8w8", fc_name="gemm_a8w8")
@@ -24,7 +26,7 @@ def gemm_a8w8_ck(
     Out: torch.Tensor,
     bias: Optional[torch.Tensor] = None,
     splitK: int = 0,
-) -> torch.Tensor: ...
+) -> None: ...
 
 
 @compile_ops("module_gemm_a8w8_bpreshuffle", fc_name="gemm_a8w8_bpreshuffle")
@@ -34,7 +36,7 @@ def gemm_a8w8_bpreshuffle_ck(
     x_scale: torch.Tensor,
     w_scale: torch.Tensor,
     Out: torch.Tensor,
-) -> torch.Tensor: ...
+) -> None: ...
 
 
 @compile_ops("module_gemm_a8w8_asm", fc_name="gemm_a8w8_asm")
@@ -51,7 +53,7 @@ def gemm_a8w8_asm(
     pad_b: Optional[int] = 0,
     pad_c: Optional[int] = 0,
     splitK: Optional[int] = 0,
-) -> torch.Tensor: ...
+) -> None: ...
 
 
 @compile_ops("module_gemm_a8w8_blockscale", fc_name="gemm_a8w8_blockscale")
@@ -61,7 +63,7 @@ def gemm_a8w8_blockscale_ck(
     x_scale: torch.Tensor,
     w_scale: torch.Tensor,
     Out: torch.Tensor,
-) -> torch.Tensor: ...
+) -> None: ...
 
 
 @compile_ops("module_gemm_a8w8_blockscale_asm", fc_name="flatmm_a8w8_blockscale_asm")
@@ -71,7 +73,7 @@ def flatmm_a8w8_blockscale_asm(
     x_scale: Tensor,
     w_scale: Tensor,
     out: Tensor,
-): ...
+) -> None: ...
 
 
 @functools.lru_cache(maxsize=1024)
@@ -85,23 +87,61 @@ def compute_gemm_SplitK(M: int, N: int, K: int, tile_m: int, tile_n: int, tile_k
     return splitK
 
 
-@functools.lru_cache(maxsize=1024)
-def get_CKGEMM_config(M: int, N: int, K: int, tuned_file="a8w8_tuned_gemm.csv"):
-    if not hasattr(get_CKGEMM_config, "ckgemm_dict"):
-        get_CKGEMM_config.ckgemm_dict = {}
-    if tuned_file not in get_CKGEMM_config.ckgemm_dict:
+_CKGEMM_CONFIG_CACHE = None
+
+def get_CKGEMM_config_(
+    X: Tensor,
+) -> None:
+    global _CKGEMM_CONFIG_CACHE
+
+    if _CKGEMM_CONFIG_CACHE is None:
         ckgemm_dict = pd.read_csv(
-            f"{AITER_ROOT_DIR}/aiter/configs/{tuned_file}"
+            f"{AITER_ROOT_DIR}/aiter/configs/a8w8_tuned_gemm.csv"
         ).drop_duplicates()
-        get_CKGEMM_config.ckgemm_dict[tuned_file] = ckgemm_dict.set_index(
-            ["cu_num", "M", "N", "K"]
-        ).to_dict("index")
-    cu_num = get_cu_num()
-    config = get_CKGEMM_config.ckgemm_dict[tuned_file].get((cu_num, M, N, K), None)
-    if config is not None:
-        logger.info(
-            f"shape M:{M}, N:{N}, K:{K} is tuned on cu_num = {cu_num} in CKGEMM, kernel name is {config['kernelName']}!"
+        _CKGEMM_CONFIG_CACHE = ckgemm_dict.set_index(["M", "N", "K"]).to_dict(
+            "index"
         )
+    return None
+
+
+def get_CKGEMM_config_fake(
+    X: Tensor,
+) -> None:
+    return None
+
+
+op_name = f"aiter::get_CKGEMM_config_"
+
+schema_str = torch.library.infer_schema(get_CKGEMM_config_, mutates_args=())
+torch.library.define(op_name, schema_str, lib=aiter_lib)
+torch.library.impl(op_name, "cuda", get_CKGEMM_config_, lib=aiter_lib)
+# torch.library.impl(op_name, "CPU", get_CKGEMM_config_, lib=aiter_lib)
+torch.library.register_fake(op_name, get_CKGEMM_config_fake, lib=aiter_lib)
+
+
+@functools.lru_cache(maxsize=1024)
+def get_CKGEMM_config(
+    M: Tensor,
+    N: Tensor,
+    K: Tensor,
+):
+    torch.ops.aiter.get_CKGEMM_config_(torch.empty(1, device="cuda"))
+    config = _CKGEMM_CONFIG_CACHE.get((M, N, K), None)
+    
+    # if not hasattr(get_CKGEMM_config, "ckgemm_dict"):
+    #     ckgemm_dict = pd.read_csv(
+    #         f"{AITER_ROOT_DIR}/aiter/configs/a8w8_tuned_gemm.csv"
+    #     ).drop_duplicates()
+    #     get_CKGEMM_config.ckgemm_dict = ckgemm_dict.set_index(["M", "N", "K"]).to_dict(
+    #         "index"
+    #     )
+    # config = get_CKGEMM_config.ckgemm_dict.get((M, N, K), None)
+
+    if config != None:
+        mnk = config["kernelName"].split("_")[2].split("x")[1:]
+        config["tile_m"] = int(mnk[0])
+        config["tile_n"] = int(mnk[1])
+        config["tile_k"] = int(mnk[2])
     return config
 
 
@@ -183,7 +223,8 @@ def gemm_a8w8_ASM(
             bias=torch.zeros(n,dtype=dtypes.fp32,device='cuda')"
         splitK = asm_config["splitK"]
         Y = torch.empty(m, n, dtype=dtype, device=XQ.device)
-        return gemm_a8w8_asm(XQ, WQ, x_scale, w_scale, Y, bias, splitK=splitK)
+        gemm_a8w8_asm(XQ, WQ, x_scale, w_scale, Y, bias, splitK=splitK)
+        return Y
     return None
 
 
@@ -210,7 +251,8 @@ def gemm_a8w8_CK(
         else:
             splitK = 0
     Y = torch.empty(m, n, dtype=dtype, device=XQ.device)
-    return gemm_a8w8_ck(XQ, WQ, x_scale, w_scale, Y, bias, splitK)
+    gemm_a8w8(XQ, WQ, x_scale, w_scale, Y, bias, splitK)
+    return Y
 
 
 def gemm_a8w8_bpreshuffle(
@@ -243,7 +285,8 @@ def gemm_a8w8_bpreshuffle(
     assert WQ.dtype == dtypes.fp8, "gemm_a8w8_bpreshuffle only support fp8 now"
     assert bias is None, "gemm_a8w8_bpreshuffle does not support bias now"
     Y = torch.empty(m, n, dtype=dtype, device=XQ.device)
-    return gemm_a8w8_bpreshuffle_ck(XQ, WQ, x_scale, w_scale, Y)
+    gemm_a8w8_bpreshuffle_ck(XQ, WQ, x_scale, w_scale, Y)
+    return Y
 
 
 def gemm_a8w8_blockscale(
@@ -258,7 +301,8 @@ def gemm_a8w8_blockscale(
     k = XQ.shape[1]
     get_CKGEMM_config(m, n, k, "a8w8_blockscale_tuned_gemm.csv")
     Y = torch.empty(m, n, dtype=dtype, device=XQ.device)
-    return gemm_a8w8_blockscale_ck(XQ, WQ, x_scale, w_scale, Y)
+    gemm_a8w8_blockscale_ck(XQ, WQ, x_scale, w_scale, Y)
+    return Y
 
 
 def flatmm_a8w8_blockscale_ASM(
@@ -299,7 +343,7 @@ def gemm_a8w8_blockscale_tune(
     Out: torch.Tensor,
     kernelId: int = 0,
     splitK: int = 0,
-) -> torch.Tensor: ...
+) -> None: ...
 @compile_ops("module_gemm_a8w8_bpreshuffle_tune", fc_name="gemm_a8w8_bpreshuffle_tune")
 def gemm_a8w8_bpreshuffle_tune(
     XQ: torch.Tensor,
@@ -309,4 +353,4 @@ def gemm_a8w8_bpreshuffle_tune(
     Out: torch.Tensor,
     kernelId: int = 0,
     splitK: int = 0,
-) -> torch.Tensor: ...
+) -> None: ...

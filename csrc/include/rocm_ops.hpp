@@ -18,8 +18,8 @@
     m.def("mul_", &aiter_mul_, "apply for mul_ with transpose and broadcast."); \
     m.def("sub_", &aiter_sub_, "apply for sub_ with transpose and broadcast."); \
     m.def("div_", &aiter_div_, "apply for div_ with transpose and broadcast.");
-#define AITER_UNARY_PYBIND                                  \
-    m.def("sigmoid", &aiter_sigmoid, "apply for sigmoid."); \
+#define AITER_UNARY_PYBIND                                                      \
+    m.def("sigmoid", &aiter_sigmoid, "apply for sigmoid.");                     \
     m.def("tanh", &aiter_tanh, "apply for tanh.");
 
 #define ATTENTION_ASM_MLA_PYBIND        \
@@ -59,6 +59,7 @@
           py::arg("V"),                             \
           py::arg("block_tables"),                  \
           py::arg("context_lens"),                  \
+          py::arg("output"),                        \
           py::arg("max_num_blocks"),                \
           py::arg("max_qlen")       = 1,            \
           py::arg("K_QScale")       = std::nullopt, \
@@ -79,6 +80,7 @@
           py::arg("context_lens"),     \
           py::arg("k_dequant_scales"), \
           py::arg("v_dequant_scales"), \
+          py::arg("output"),           \
           py::arg("max_seq_len"),      \
           py::arg("num_kv_heads"),     \
           py::arg("scale_s"),          \
@@ -265,7 +267,7 @@
           py::arg("handles"),                                                                  \
           py::arg("offsets"));                                                                 \
     m.def("allocate_meta_buffer", &aiter::allocate_meta_buffer, py::arg("size"));              \
-    m.def("get_meta_buffer_ipc_handle", &aiter::get_meta_buffer_ipc_handle, py::arg("inp"));
+    m.def("get_meta_buffer_ipc_handle", &aiter::get_meta_buffer_ipc_handle, py::arg("inp"), py::arg("out"));
 
 #define CUSTOM_PYBIND                                                                           \
     m.def("wvSpltK",                                                                            \
@@ -302,21 +304,19 @@
           py::arg("pad_c")  = 0,                                        \
           py::arg("splitK") = 0);
 
-#define GEMM_A4W4_ASM_PYBIND                      \
-    m.def("gemm_a4w4_asm",                        \
-          &gemm_a4w4_asm,                         \
-          "Asm gemm a4w4",                        \
-          py::arg("A"),                           \
-          py::arg("B"),                           \
-          py::arg("A_scale"),                     \
-          py::arg("B_scale"),                     \
-          py::arg("out"),                         \
-          py::arg("kernelName"),                  \
-          py::arg("bias")         = std::nullopt, \
-          py::arg("alpha")        = 1.0,          \
-          py::arg("beta")         = 0.0,          \
-          py::arg("bpreshuffle")  = true,         \
-          py::arg("log2_k_split") = std::nullopt);
+#define GEMM_A4W4_ASM_PYBIND            \
+    m.def("gemm_a4w4_asm",              \
+          &gemm_a4w4_asm,               \
+          "Asm gemm a4w4",              \
+          py::arg("A"),                 \
+          py::arg("B"),                 \
+          py::arg("A_scale"),           \
+          py::arg("B_scale"),           \
+          py::arg("out"),               \
+          py::arg("bias"),              \
+          py::arg("alpha")       = 1.0, \
+          py::arg("beta")        = 0.0, \
+          py::arg("bpreshuffle") = true);
 
 #define GEMM_A4W4_BLOCKSCALE_PYBIND \
     m.def("gemm_a4w4_blockscale",   \
@@ -327,7 +327,7 @@
           py::arg("x_scale"),       \
           py::arg("w_scale"),       \
           py::arg("Out"),           \
-          py::arg("splitK") = 0);
+          py::arg("splitK")   = 0);
 
 #define GEMM_A8W8_BLOCKSCALE_PYBIND \
     m.def("gemm_a8w8_blockscale",   \
@@ -583,6 +583,7 @@
 #define MHA_VARLEN_FWD_PYBIND                     \
     m.def("mha_varlen_fwd",                       \
           &aiter::torch_itfs::mha_varlen_fwd,     \
+          py::arg("output"),                      \
           py::arg("q"),                           \
           py::arg("k"),                           \
           py::arg("v"),                           \
@@ -654,18 +655,6 @@
           py::arg("topk_grp"),                                                                \
           py::arg("need_renorm"),                                                             \
           py::arg("routed_scaling_factor") = 1.0f,                                            \
-          "Apply biased grouped topk softmax to the gating outputs.");                        \
-    m.def("moe_fused_gate",                                                                   \
-          &moe_fused_gate,                                                                    \
-          py::arg("input"),                                                                   \
-          py::arg("bias"),                                                                    \
-          py::arg("topk_weights"),                                                            \
-          py::arg("topk_ids"),                                                                \
-          py::arg("num_expert_group"),                                                        \
-          py::arg("topk_group"),                                                              \
-          py::arg("topk"),                                                                    \
-          py::arg("n_share_experts_fusion"),                                                  \
-          py::arg("routed_scaling_factor") = 1.0,                                             \
           "Apply biased grouped topk softmax to the gating outputs.");                        \
     m.def("moe_align_block_size",                                                             \
           &aiter::moe_align_block_size,                                                       \
@@ -773,12 +762,12 @@
           py::arg("num_experts"),                      \
           py::arg("unit_size"),                        \
           py::arg("local_expert_mask") = std::nullopt, \
-          py::arg("num_local_tokens")  = std::nullopt, \
-          py::arg("dispatch_policy")   = 0);
+          py::arg("num_local_tokens")  = std::nullopt);
 
 #define NORM_PYBIND                                               \
     m.def("layernorm2d_fwd",                                      \
           &layernorm2d,                                           \
+          py::arg("out"),                                         \
           py::arg("input"),                                       \
           py::arg("weight"),                                      \
           py::arg("bias"),                                        \
@@ -843,32 +832,23 @@
     m.def("rotary_embedding_fwd", &rotary_embedding, "rotary_embedding"); \
     m.def("batched_rotary_embedding", &batched_rotary_embedding, "batched_rotary_embedding");
 
-#define QUANT_PYBIND                                                       \
-    m.def("static_per_tensor_quant", &aiter::static_per_tensor_quant);     \
-    m.def("dynamic_per_tensor_quant", &aiter::dynamic_per_tensor_quant);   \
-    m.def("dynamic_per_token_scaled_quant",                                \
-          &aiter::dynamic_per_token_scaled_quant,                          \
-          py::arg("out"),                                                  \
-          py::arg("input"),                                                \
-          py::arg("scales"),                                               \
-          py::arg("scale_ub")        = std::nullopt,                       \
-          py::arg("shuffle_scale")   = false,                              \
-          py::arg("num_rows")        = std::nullopt,                       \
-          py::arg("num_rows_factor") = 1);                                 \
-    m.def("dynamic_per_group_scaled_quant_fp4",                            \
-          &aiter::dynamic_per_group_scaled_quant_fp4,                      \
-          py::arg("out"),                                                  \
-          py::arg("input"),                                                \
-          py::arg("scales"),                                               \
-          py::arg("group_size")    = 32,                                   \
-          py::arg("shuffle_scale") = true,                                 \
-          py::arg("num_rows")        = std::nullopt,                       \
-          py::arg("num_rows_factor") = 1);                                 \
-    m.def("partial_transpose",                                             \
-          &aiter::partial_transpose,                                       \
-          py::arg("out"),                                                  \
-          py::arg("input"),                                                \
-          py::arg("num_rows"));
+#define QUANT_PYBIND                                                     \
+    m.def("static_per_tensor_quant", &aiter::static_per_tensor_quant);   \
+    m.def("dynamic_per_tensor_quant", &aiter::dynamic_per_tensor_quant); \
+    m.def("dynamic_per_token_scaled_quant",                              \
+          &aiter::dynamic_per_token_scaled_quant,                        \
+          py::arg("out"),                                                \
+          py::arg("input"),                                              \
+          py::arg("scales"),                                             \
+          py::arg("scale_ub")      = std::nullopt,                       \
+          py::arg("shuffle_scale") = true);                              \
+    m.def("dynamic_per_group_scaled_quant_fp4",                          \
+          &aiter::dynamic_per_group_scaled_quant_fp4,                    \
+          py::arg("out"),                                                \
+          py::arg("input"),                                              \
+          py::arg("scales"),                                             \
+          py::arg("group_size")    = 32,                                 \
+          py::arg("shuffle_scale") = true);
 
 #define RMSNORM_PYBIND                                                                             \
     m.def("rms_norm_cu",                                                                           \
@@ -876,12 +856,7 @@
           "Apply Root Mean Square (RMS) Normalization to the input tensor.");                      \
     m.def(                                                                                         \
         "fused_add_rms_norm_cu", &fused_add_rms_norm, "In-place fused Add and RMS Normalization"); \
-    m.def("rmsnorm2d_fwd",                                                                         \
-          &rmsnorm2d,                                                                              \
-          py::arg("input"),                                                                        \
-          py::arg("weight"),                                                                       \
-          py::arg("epsilon"),                                                                      \
-          py::arg("use_model_sensitive_rmsnorm") = 0);                                             \
+    m.def("rmsnorm2d_fwd", &rmsnorm2d, py::arg("input"), py::arg("weight"), py::arg("epsilon"));   \
     m.def("rmsnorm2d_fwd_with_add",                                                                \
           &rmsnorm2d_with_add,                                                                     \
           py::arg("out"),                                                                          \
@@ -889,8 +864,7 @@
           py::arg("residual_in"),                                                                  \
           py::arg("residual_out"),                                                                 \
           py::arg("weight"),                                                                       \
-          py::arg("epsilon"),                                                                      \
-          py::arg("use_model_sensitive_rmsnorm") = 0);                                             \
+          py::arg("epsilon"));                                                                     \
     m.def("rmsnorm2d_fwd_with_smoothquant", &rmsnorm2d_with_smoothquant);                          \
     m.def("rmsnorm2d_fwd_with_add_smoothquant",                                                    \
           &rmsnorm2d_with_add_smoothquant,                                                         \
@@ -902,8 +876,7 @@
           py::arg("yscale"),                                                                       \
           py::arg("weight"),                                                                       \
           py::arg("epsilon"),                                                                      \
-          py::arg("out_before_quant")            = std::nullopt,                                   \
-          py::arg("use_model_sensitive_rmsnorm") = 0);                                             \
+          py::arg("out_before_quant") = std::nullopt);                                             \
     m.def("rmsnorm2d_fwd_with_dynamicquant", &rmsnorm2d_with_dynamicquant);                        \
     m.def("rmsnorm2d_fwd_with_add_dynamicquant", &rmsnorm2d_with_add_dynamicquant);
 
@@ -942,6 +915,7 @@
           py::arg("mat1"),                                                         \
           py::arg("mat2"),                                                         \
           py::arg("solution_index"),                                               \
+          py::arg("result"),                                                        \
           py::arg("bias")      = std::nullopt,                                     \
           py::arg("out_dtype") = std::nullopt,                                     \
           py::arg("scaleA")    = std::nullopt,                                     \
