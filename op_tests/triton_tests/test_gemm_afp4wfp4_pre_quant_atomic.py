@@ -143,8 +143,10 @@ def run_torch(x, w, w_scales, dtype):
 @pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16, torch.float32])
 @pytest.mark.parametrize("output", [True, False])
 def test_gemm_afp4_wfp4_pre_quant(M: int, N: int, K: int, dtype, output: bool):
-    if triton.runtime.driver.active.get_current_target().arch not in ("gfx950"):
+    if not (arch_info.is_fp4_avail()):
         pytest.skip("MXFP4 not supported on this architecture")
+
+    torch.cuda.empty_cache()  # Helps avoid hangs in large tests
 
     # TODO resolve this compilation error
     if M == 4864 and N == 8192 and K == 4160:
